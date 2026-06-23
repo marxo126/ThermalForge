@@ -42,15 +42,17 @@ public final class ThermalMonitor {
     // MARK: - Tick Timing
 
     /// Thermal tick interval in seconds. Fan control runs at this rate.
-    private let tickInterval: Float
+    /// Set from `start(interval:)` so the ramp / sustained-trigger math (which
+    /// divides by it) always matches the real timer rate.
+    private var tickInterval: Float = 0.25
 
-    /// Monitor cadence: process capture + anomaly detection every N thermal ticks.
-    /// At 100ms thermal tick, 20 × 0.1s = 2 seconds.
-    private static let monitorCadence = 20
+    /// Process capture + anomaly detection run every ~2 seconds, regardless of
+    /// the tick rate. Derived from tickInterval so the wall-clock cadence holds.
+    private var monitorCadence: Int { max(1, Int((2.0 / tickInterval).rounded())) }
 
-    /// UI update cadence: onUpdate fires every N thermal ticks.
-    /// At 100ms thermal tick, 5 × 0.1s = 500ms — smooth UI without excessive redraws.
-    private static let uiUpdateCadence = 5
+    /// onUpdate / full-status build run every ~500ms. monitorCadence is always
+    /// a multiple of this (2.0 / 0.5 == 4), so a full status exists on monitor ticks.
+    private var uiUpdateCadence: Int { max(1, Int((0.5 / tickInterval).rounded())) }
 
     /// Below this peak temperature the rolling process buffer isn't worth its
     /// sysctl sweep — skip process capture at idle. (°C)
@@ -102,16 +104,19 @@ public final class ThermalMonitor {
     public init(fanControl: FanControl, profile: FanProfile = .silent) {
         self.fanControl = fanControl
         self.activeProfile = profile
-        self.tickInterval = 0.1
     }
 
     // MARK: - Lifecycle
 
-    public func start(interval: TimeInterval = 0.1) {
+    public func start(interval: TimeInterval = 0.25) {
         stop()
 
+        tickInterval = Float(interval)
+
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: interval)
+        // Leeway lets the OS coalesce timer wakeups with other work — a big idle
+        // CPU win for a low-frequency poll, and ±20% is invisible to fan control.
+        timer.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(Int(interval * 200)))
         timer.setEventHandler { [weak self] in
             self?.tick()
         }
@@ -160,11 +165,11 @@ public final class ThermalMonitor {
         // The full sensor snapshot (all temps + fan actual/target/mode) is only
         // consumed by the UI (500ms) and the monitor tick (2s, a multiple of the
         // UI cadence). Build it on the UI cadence and reuse it for both.
-        let status = tickCounter % Self.uiUpdateCadence == 0 ? try? fanControl.status() : nil
+        let status = tickCounter % uiUpdateCadence == 0 ? try? fanControl.status() : nil
         if let status { latestStatus = status }
 
         // Monitor cadence: process capture + anomaly detection (every 2 seconds)
-        if tickCounter % Self.monitorCadence == 0, let status {
+        if tickCounter % monitorCadence == 0, let status {
             monitorTick(status: status, maxTemp: maxTemp)
         }
 
@@ -295,7 +300,7 @@ public final class ThermalMonitor {
 
     private func tickSmart(peakTemp: Float, minRPM: Float, maxRPM: Float) {
         // Sample temperature history at monitor cadence (2s) for stable rate-of-change
-        if tickCounter % Self.monitorCadence == 0 {
+        if tickCounter % monitorCadence == 0 {
             tempHistory.append(peakTemp)
             if tempHistory.count > 4 { tempHistory.removeFirst() }
         }
@@ -398,7 +403,7 @@ public final class ThermalMonitor {
         let oldest = tempHistory.first!
         let newest = tempHistory.last!
         // tempHistory sampled at monitor cadence (2s intervals)
-        let seconds = Float(tempHistory.count - 1) * Float(Self.monitorCadence) * tickInterval
+        let seconds = Float(tempHistory.count - 1) * Float(monitorCadence) * tickInterval
         return (newest - oldest) / seconds
     }
 
