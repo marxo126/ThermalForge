@@ -20,6 +20,17 @@ final class AppState {
     var useFahrenheit: Bool = UserDefaults.standard.bool(forKey: "useFahrenheit") {
         didSet { UserDefaults.standard.set(useFahrenheit, forKey: "useFahrenheit") }
     }
+    /// Extra Cool: a sticky modifier that shifts the active profile colder and
+    /// louder. The toggle is persisted; the *selected profile* deliberately is
+    /// not — the app always starts in Silent (hands-off) on launch for safety,
+    /// so a restored `true` here simply takes effect the moment a profile is chosen.
+    var extraCool: Bool = UserDefaults.standard.bool(forKey: "extraCool") {
+        didSet {
+            UserDefaults.standard.set(extraCool, forKey: "extraCool")
+            applyProfile(baseProfile)
+            TFLogger.shared.profile("Extra Cool \(extraCool ? "ON" : "off")")
+        }
+    }
     var launchAtLogin: Bool = false {
         didSet { updateLoginItem() }
     }
@@ -30,6 +41,8 @@ final class AppState {
     /// Guards against re-entrant recursion when reverting the launchAtLogin
     /// toggle below (the revert re-fires the didSet).
     @ObservationIgnored private var isUpdatingLoginItem = false
+    /// The profile the user picked, before any Extra Cool transform.
+    @ObservationIgnored private var baseProfile: FanProfile = .silent
     /// Whether the dropdown panel is currently shown. The panel's hosting view
     /// stays alive while hidden and re-renders on any observed change, so we
     /// only feed it the per-tick `latestStatus` while it's actually visible.
@@ -144,15 +157,13 @@ final class AppState {
     // MARK: - Actions
 
     func setSmart() {
-        activeProfile = .smart
-        monitor?.switchProfile(.smart)
-        syncHeartbeat(for: .smart)
-        TFLogger.shared.profile("Smart activated")
+        applyProfile(.smart)
     }
 
     func resetAuto() {
         do {
             try executor.execute(.resetAuto)
+            baseProfile = .silent
             activeProfile = .silent
             monitor?.switchProfile(.silent)
             stopHeartbeat()
@@ -163,21 +174,31 @@ final class AppState {
     }
 
     func selectProfile(_ profile: FanProfile) {
-        activeProfile = profile
-        monitor?.switchProfile(profile)
-        syncHeartbeat(for: profile)
-        TFLogger.shared.profile("Selected: \(profile.name)")
+        applyProfile(profile)
+    }
+
+    /// Apply a base profile, transforming it through Extra Cool when enabled.
+    /// `Silent` is hands-off and ignores Extra Cool.
+    private func applyProfile(_ base: FanProfile) {
+        baseProfile = base
+        activeProfile = base
+        let effective = extraCool ? base.extraCool() : base
+        monitor?.switchProfile(effective)
+        syncHeartbeat(for: effective)
+
+        let cool = (extraCool && !base.curve.handsOff) ? " (Extra Cool)" : ""
+        TFLogger.shared.profile("Selected: \(base.name)\(cool)")
 
         // All profiles use proportional curves — tick() handles fan engagement.
         // Reset to auto on profile change so tick() starts from a clean state.
         do {
-            if profile.curve.handsOff || profile.id == "smart" || profile.id == "silent" {
+            if base.curve.handsOff || base.id == "smart" || base.id == "silent" {
                 try executor.execute(.resetAuto)
             }
             // Balanced/Performance/Max: tick() will ramp proportionally
             // based on current temperature after sustained trigger is met
         } catch {
-            TFLogger.shared.error("Profile \(profile.name) failed: \(error)")
+            TFLogger.shared.error("Profile \(base.name) failed: \(error)")
         }
     }
 
