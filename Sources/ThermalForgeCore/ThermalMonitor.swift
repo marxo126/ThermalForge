@@ -44,7 +44,7 @@ public final class ThermalMonitor {
     /// Thermal tick interval in seconds. Fan control runs at this rate.
     /// Set from `start(interval:)` so the ramp / sustained-trigger math (which
     /// divides by it) always matches the real timer rate.
-    private var tickInterval: Float = 0.25
+    private var tickInterval: Float = 1.0
 
     /// Process capture + anomaly detection run every ~2 seconds, regardless of
     /// the tick rate. Derived from tickInterval so the wall-clock cadence holds.
@@ -126,7 +126,7 @@ public final class ThermalMonitor {
 
     // MARK: - Lifecycle
 
-    public func start(interval: TimeInterval = 0.25) {
+    public func start(interval: TimeInterval = 1.0) {
         stop()
 
         activeInterval = Float(interval)
