@@ -62,15 +62,19 @@ public final class ThermalMonitor {
 
     /// Fast poll rate, from `start(interval:)`. Used while warm or active.
     private var activeInterval: Float = 0.25
-    /// Slow poll rate while cool & idle. Idle CPU is dominated by per-key SMC
-    /// reads (~150µs each), so fewer ticks ≈ proportionally less idle CPU.
+    /// Slow poll rate while idle. Idle CPU is dominated by per-key SMC reads
+    /// (~150µs each), so fewer ticks ≈ proportionally less idle CPU.
     private static let idleInterval: Float = 2.0
-    /// Switch to fast polling at/above this temp; fall back to slow below the
-    /// exit threshold (hysteresis avoids flapping). Nothing engages below the
-    /// lowest profile startTemp (53°C), so slow polling here is safe.
-    private static let cadenceWarmEnter: Float = 48.0
-    private static let cadenceWarmExit: Float = 44.0
-    private var fastCadence = true
+    /// Stay fast at/above this temp regardless of profile, so the 95°C safety
+    /// override reacts promptly. Apple Silicon idles ~45–60°C — overlapping the
+    /// profile start temps — so a plain temp threshold can never relax. The real
+    /// "can slow down" signal is state-based: fans off, idle, and below this
+    /// profile's start temp (sustainedAboveCount == 0).
+    private static let safetyWatchTemp: Float = 85.0
+    /// Require this many consecutive idle ticks before relaxing, so hovering at a
+    /// start temp doesn't flap the timer. Returns to fast immediately on activity.
+    private static let idleConfirmTicks = 8
+    private var consecutiveIdleTicks = 0
 
     private var tickCounter = 0
 
@@ -127,7 +131,7 @@ public final class ThermalMonitor {
 
         activeInterval = Float(interval)
         tickInterval = activeInterval
-        fastCadence = true
+        consecutiveIdleTicks = 0
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
         scheduleTimer(timer, interval: tickInterval)
@@ -157,13 +161,22 @@ public final class ThermalMonitor {
     /// fan control and the 95°C override stay responsive; slow while cool & idle
     /// to keep idle CPU near zero. Reschedules the timer only on a real change.
     private func applyCadence(maxTemp: Float) {
-        if maxTemp >= Self.cadenceWarmEnter || fansCurrentlyRunning || state != .idle {
-            fastCadence = true
-        } else if maxTemp < Self.cadenceWarmExit {
-            fastCadence = false
+        // Busy = controlling fans, mid-event, above this profile's start temp
+        // (sustainedAboveCount > 0), or near the safety ceiling. Anything else is
+        // genuinely idle — even at a 50–60°C Apple-Silicon resting temperature.
+        let busy = fansCurrentlyRunning
+            || state != .idle
+            || sustainedAboveCount > 0
+            || maxTemp >= Self.safetyWatchTemp
+
+        if busy {
+            consecutiveIdleTicks = 0
+        } else if consecutiveIdleTicks < Self.idleConfirmTicks {
+            consecutiveIdleTicks += 1
         }
 
-        let desired = fastCadence ? activeInterval : max(Self.idleInterval, activeInterval)
+        let wantFast = busy || consecutiveIdleTicks < Self.idleConfirmTicks
+        let desired = wantFast ? activeInterval : max(Self.idleInterval, activeInterval)
         guard desired != tickInterval, let timer else { return }
         tickInterval = desired
         scheduleTimer(timer, interval: desired)
