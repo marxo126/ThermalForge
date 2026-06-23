@@ -216,16 +216,24 @@ public final class ThermalMonitor {
     // MARK: - Polling
 
     private func tick() {
-        // Cheap control read every tick — only the CPU/GPU sensors the control
-        // loop and the 95°C safety override actually consume.
-        guard let temps = fanControl.controlTemps() else { return }
-        let maxTemp = max(temps.cpu, temps.gpu)
-
-        // The full sensor snapshot (all temps + fan actual/target/mode) is only
-        // consumed by the UI (500ms) and the monitor tick (2s, a multiple of the
-        // UI cadence). Build it on the UI cadence and reuse it for both.
+        // Build the full sensor snapshot only on the UI/monitor cadence (the UI
+        // and 2s monitor tick consume it). On those ticks, derive the control
+        // peak from it instead of re-reading the CPU/GPU sensors; on the other
+        // (control-only) ticks do the cheap CPU/GPU-only read.
         let status = tickCounter % uiUpdateCadence == 0 ? try? fanControl.status() : nil
-        if let status { latestStatus = status }
+        let maxTemp: Float
+        if let status {
+            latestStatus = status
+            maxTemp = status.temperatures
+                .filter { key, _ in
+                    key.hasPrefix("TC") || key.hasPrefix("Tp") || key.hasPrefix("TG") || key.hasPrefix("Tg")
+                }
+                .values.max() ?? 0
+        } else if let temps = fanControl.controlTemps() {
+            maxTemp = max(temps.cpu, temps.gpu)
+        } else {
+            return
+        }
 
         // Monitor cadence: process capture + anomaly detection (every 2 seconds)
         if tickCounter % monitorCadence == 0, let status {
