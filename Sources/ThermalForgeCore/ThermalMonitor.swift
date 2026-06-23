@@ -164,9 +164,15 @@ public final class ThermalMonitor {
         // Busy = controlling fans, mid-event, above this profile's start temp
         // (sustainedAboveCount > 0), or near the safety ceiling. Anything else is
         // genuinely idle — even at a 50–60°C Apple-Silicon resting temperature.
+        // sustainedAboveCount tracks crossing the profile's startTemp, but a
+        // handsOff profile (Silent) never acts on it — Apple Silicon idles at
+        // 55–60°C, which is at/above Silent's 55°C start, so counting it here
+        // would wrongly pin Silent to fast polling at idle. For handsOff, only
+        // the 85°C safety watch keeps us fast.
+        let approachingEngagement = !activeProfile.curve.handsOff && sustainedAboveCount > 0
         let busy = fansCurrentlyRunning
             || state != .idle
-            || sustainedAboveCount > 0
+            || approachingEngagement
             || maxTemp >= Self.safetyWatchTemp
 
         if busy {
