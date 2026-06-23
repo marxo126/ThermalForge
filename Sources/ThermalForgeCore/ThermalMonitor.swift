@@ -52,6 +52,10 @@ public final class ThermalMonitor {
     /// At 100ms thermal tick, 5 × 0.1s = 500ms — smooth UI without excessive redraws.
     private static let uiUpdateCadence = 5
 
+    /// Below this peak temperature the rolling process buffer isn't worth its
+    /// sysctl sweep — skip process capture at idle. (°C)
+    private static let processCaptureFloor: Float = 50.0
+
     private var tickCounter = 0
 
     // MARK: - Fan State
@@ -148,22 +152,23 @@ public final class ThermalMonitor {
     // MARK: - Polling
 
     private func tick() {
-        guard let status = try? fanControl.status() else { return }
-        latestStatus = status
+        // Cheap control read every tick — only the CPU/GPU sensors the control
+        // loop and the 95°C safety override actually consume.
+        guard let temps = fanControl.controlTemps() else { return }
+        let maxTemp = max(temps.cpu, temps.gpu)
 
-        // Extract peak temperatures
-        // CPU: aggregate keys (M5) + per-core keys (M1-M4)
-        let cpuTemp = peakTemp(status, prefixes: ["TC", "Tp"])
-        // GPU: ioft keys (M5) + flt keys (M1-M4)
-        let gpuTemp = peakTemp(status, prefixes: ["TG", "Tg"])
-        let maxTemp = max(cpuTemp, gpuTemp)
+        // The full sensor snapshot (all temps + fan actual/target/mode) is only
+        // consumed by the UI (500ms) and the monitor tick (2s, a multiple of the
+        // UI cadence). Build it on the UI cadence and reuse it for both.
+        let status = tickCounter % Self.uiUpdateCadence == 0 ? try? fanControl.status() : nil
+        if let status { latestStatus = status }
 
         // Monitor cadence: process capture + anomaly detection (every 2 seconds)
-        if tickCounter % Self.monitorCadence == 0 {
+        if tickCounter % Self.monitorCadence == 0, let status {
             monitorTick(status: status, maxTemp: maxTemp)
         }
 
-        // Safety override: any sensor > 95°C
+        // Safety override: any CPU/GPU sensor > 95°C
         if maxTemp >= FanProfile.safetyTempThreshold {
             if state != .safetyOverride {
                 applyCommand(.setMax)
@@ -172,9 +177,7 @@ public final class ThermalMonitor {
                 lastAppliedRPMPercent = 1.0
                 TFLogger.shared.safety("Override triggered: \(String(format: "%.1f", maxTemp))°C — fans maxed")
             }
-            if tickCounter % Self.uiUpdateCadence == 0 {
-                onUpdate?(status, activeProfile, state)
-            }
+            if let status { onUpdate?(status, activeProfile, state) }
             tickCounter += 1
             return
         }
@@ -195,17 +198,16 @@ public final class ThermalMonitor {
             sustainedAboveCount = 0
         }
 
-        // Profile-specific logic
+        // Profile-specific logic — fan min/max are firmware-static (cached).
+        let limits = fanControl.primaryFanLimits()
         if activeProfile.id == "smart" {
-            tickSmart(status: status, peakTemp: maxTemp)
+            tickSmart(peakTemp: maxTemp, minRPM: limits.minRPM, maxRPM: limits.maxRPM)
         } else {
-            tickCurve(status: status, peakTemp: maxTemp)
+            tickCurve(peakTemp: maxTemp, minRPM: limits.minRPM, maxRPM: limits.maxRPM)
         }
 
         // UI update at slower cadence (every 500ms)
-        if tickCounter % Self.uiUpdateCadence == 0 {
-            onUpdate?(status, activeProfile, state)
-        }
+        if let status { onUpdate?(status, activeProfile, state) }
 
         tickCounter += 1
     }
@@ -215,11 +217,18 @@ public final class ThermalMonitor {
     /// Heavy operations: process capture + anomaly detection.
     /// Runs at 2-second intervals to avoid sysctl overhead at 100ms.
     private func monitorTick(status: ThermalStatus, maxTemp: Float) {
-        // Rolling process buffer — always capturing, like a security camera
-        let currentProcs = captureTopProcesses()
-        let ts = isoFormatter.string(from: Date())
-        processBuffer.append((timestamp: ts, processes: currentProcs))
-        if processBuffer.count > 15 { processBuffer.removeFirst() }
+        // Rolling process buffer — captures what was running BEFORE a spike, but
+        // only while the machine is warm enough for one to matter. At true idle
+        // the sysctl(KERN_PROC_ALL) sweep is pure overhead, so skip it and drop
+        // any stale snapshots. Anomaly detection below still runs every cycle.
+        if maxTemp >= Self.processCaptureFloor {
+            let currentProcs = captureTopProcesses()
+            let ts = isoFormatter.string(from: Date())
+            processBuffer.append((timestamp: ts, processes: currentProcs))
+            if processBuffer.count > 15 { processBuffer.removeFirst() }
+        } else if !processBuffer.isEmpty {
+            processBuffer.removeAll()
+        }
 
         // Anomaly detection: two tiers
         // Tier 1: instant spike — >5°C between consecutive readings (2 seconds)
@@ -284,15 +293,13 @@ public final class ThermalMonitor {
     /// All profiles share the same off threshold — 50°C matches Apple's observed stop range
     private static let smartStopTemp: Float = 50.0
 
-    private func tickSmart(status: ThermalStatus, peakTemp: Float) {
+    private func tickSmart(peakTemp: Float, minRPM: Float, maxRPM: Float) {
         // Sample temperature history at monitor cadence (2s) for stable rate-of-change
         if tickCounter % Self.monitorCadence == 0 {
             tempHistory.append(peakTemp)
             if tempHistory.count > 4 { tempHistory.removeFirst() }
         }
 
-        let maxRPM = status.fans.first.map { Float($0.maxRPM) } ?? 7826
-        let minRPM = status.fans.first.map { Float($0.minRPM) } ?? 2317
         let minPct = minRPM / maxRPM
 
         // Below stop threshold and fans running: turn off (with hysteresis)
@@ -397,10 +404,8 @@ public final class ThermalMonitor {
 
     // MARK: - Curve-Based Profiles
 
-    private func tickCurve(status: ThermalStatus, peakTemp: Float) {
+    private func tickCurve(peakTemp: Float, minRPM: Float, maxRPM: Float) {
         let curve = activeProfile.curve
-        let maxRPM = status.fans.first.map { Float($0.maxRPM) } ?? 7826
-        let minRPM = status.fans.first.map { Float($0.minRPM) } ?? 2317
 
         // Hands-off profiles (Silent): don't control fans, just monitor
         if curve.handsOff {
@@ -513,12 +518,6 @@ public final class ThermalMonitor {
     }
 
     // MARK: - Helpers
-
-    private func peakTemp(_ status: ThermalStatus, prefixes: [String]) -> Float {
-        status.temperatures
-            .filter { key, _ in prefixes.contains(where: { key.hasPrefix($0) }) }
-            .values.max() ?? 0
-    }
 
     private func applyCommand(_ command: FanCommand) {
         do {
