@@ -165,19 +165,16 @@ public final class ThermalMonitor {
     /// Adjust the poll rate to match thermal activity. Fast while warm/active so
     /// fan control and the 95°C override stay responsive; slow while cool & idle
     /// to keep idle CPU near zero. Reschedules the timer only on a real change.
-    private func applyCadence(maxTemp: Float) {
-        // Busy = controlling fans, mid-event, above this profile's start temp
-        // (sustainedAboveCount > 0), or near the safety ceiling. Anything else is
-        // genuinely idle — even at a 50–60°C Apple-Silicon resting temperature.
-        // sustainedAboveCount tracks crossing the profile's startTemp, but a
-        // handsOff profile (Silent) never acts on it — Apple Silicon idles at
-        // 55–60°C, which is at/above Silent's 55°C start, so counting it here
-        // would wrongly pin Silent to fast polling at idle. For handsOff, only
-        // the 85°C safety watch keeps us fast.
-        let approachingEngagement = !activeProfile.curve.handsOff && sustainedAboveCount > 0
-        let busy = fansCurrentlyRunning
-            || state != .idle
-            || approachingEngagement
+    private func applyCadence(maxTemp: Float, fanChanged: Bool) {
+        // Fast polling is only useful when something is *moving*: the fan speed
+        // just changed (ramping), we're counting toward turning fans on, or
+        // we're near the safety ceiling. Fans merely running at a STEADY speed
+        // doesn't need 4–10 Hz — so a warm idle on Performance (fans holding at
+        // minimum at ~56°C) relaxes to the slow rate instead of polling fast.
+        let engaging = !activeProfile.curve.handsOff && !fansCurrentlyRunning && sustainedAboveCount > 0
+        let busy = fanChanged
+            || engaging
+            || state == .safetyOverride
             || maxTemp >= Self.safetyWatchTemp
 
         if busy {
@@ -186,6 +183,8 @@ public final class ThermalMonitor {
             consecutiveIdleTicks += 1
         }
 
+        // handsOff profiles never adjust fans → slowest idle rate; fan-controlling
+        // profiles holding steady use the medium rate so they still catch a rise.
         let idleRate = activeProfile.curve.handsOff ? Self.handsOffIdleInterval : Self.idleInterval
         let wantFast = busy || consecutiveIdleTicks < Self.idleConfirmTicks
         let desired = wantFast ? activeInterval : max(idleRate, activeInterval)
@@ -256,7 +255,7 @@ public final class ThermalMonitor {
                 TFLogger.shared.safety("Override triggered: \(String(format: "%.1f", maxTemp))°C — fans maxed")
             }
             if let status { onUpdate?(status, activeProfile, state) }
-            applyCadence(maxTemp: maxTemp)
+            applyCadence(maxTemp: maxTemp, fanChanged: true)
             tickCounter += 1
             return
         }
@@ -278,17 +277,22 @@ public final class ThermalMonitor {
         }
 
         // Profile-specific logic — fan min/max are firmware-static (cached).
+        // Track whether the applied fan speed actually moved this tick: that's
+        // the signal for fast polling (ramping) vs relaxing (holding steady).
+        let appliedBefore = lastAppliedRPMPercent
+        let runningBefore = fansCurrentlyRunning
         let limits = fanControl.primaryFanLimits()
         if activeProfile.id == "smart" {
             tickSmart(peakTemp: maxTemp, minRPM: limits.minRPM, maxRPM: limits.maxRPM)
         } else {
             tickCurve(peakTemp: maxTemp, minRPM: limits.minRPM, maxRPM: limits.maxRPM)
         }
+        let fanChanged = lastAppliedRPMPercent != appliedBefore || fansCurrentlyRunning != runningBefore
 
         // UI update at slower cadence (every 500ms)
         if let status { onUpdate?(status, activeProfile, state) }
 
-        applyCadence(maxTemp: maxTemp)
+        applyCadence(maxTemp: maxTemp, fanChanged: fanChanged)
         tickCounter += 1
     }
 
