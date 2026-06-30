@@ -31,6 +31,31 @@ struct ThermalForge: ParsableCommand {
     )
 }
 
+// MARK: - Fan command routing
+
+/// Apply a fan command, preferring the running privileged daemon.
+///
+/// Issue #22: writing the SMC directly needs root, so a sudo-less `thermalforge
+/// max/set/auto` previously stalled ~10s before failing. The daemon already runs
+/// as root and (since the socket peer-auth change) accepts the console user, so
+/// routing through it lets an ordinary invocation succeed instantly. We only
+/// fall back to a direct SMC write when the daemon isn't installed/running —
+/// and that direct path still needs sudo, but now it's the exception, not the
+/// default. A daemon-side failure is surfaced rather than masked by a retry.
+func applyFanCommand(_ command: FanCommand, fallback: () throws -> Void) throws {
+    do {
+        try DaemonClient().execute(command)
+        return
+    } catch DaemonError.notRunning, DaemonError.connectionFailed {
+        // Daemon not available — fall through to a direct (privileged) write.
+    } catch DaemonError.timedOut {
+        FileHandle.standardError.write(
+            Data("thermalforge: daemon busy (timed out); attempting a direct write\n".utf8)
+        )
+    }
+    try fallback()
+}
+
 // MARK: - Max
 
 struct Max: ParsableCommand {
@@ -40,12 +65,17 @@ struct Max: ParsableCommand {
     )
 
     func run() throws {
-        let fc = try FanControl()
-        try fc.setMax()
-
-        let status = try fc.status()
-        for fan in status.fans {
-            print("Fan \(fan.index): \(fan.actualRPM) RPM → max (\(fan.maxRPM) RPM)")
+        try applyFanCommand(.setMax) {
+            try FanControl().setMax()
+        }
+        // SMC reads are unprivileged, so report the resulting state regardless
+        // of which path applied the change.
+        if let fc = try? FanControl(), let status = try? fc.status() {
+            for fan in status.fans {
+                print("Fan \(fan.index): \(fan.actualRPM) RPM → max (\(fan.maxRPM) RPM)")
+            }
+        } else {
+            print("All fans set to maximum.")
         }
     }
 }
@@ -67,8 +97,9 @@ struct Auto: ParsableCommand {
         try? kill.run()
         kill.waitUntilExit()
 
-        let fc = try FanControl()
-        try fc.resetAuto()
+        try applyFanCommand(.resetAuto) {
+            try FanControl().resetAuto()
+        }
         print("Fans reset to Apple defaults")
     }
 }
@@ -88,17 +119,24 @@ struct SetSpeed: ParsableCommand {
     var fan: Int?
 
     func run() throws {
-        let fc = try FanControl()
         let target = Float(rpm)
 
         if let index = fan {
+            // Per-fan targeting isn't in the daemon wire protocol ("set N" sets
+            // all fans), so this path stays a direct write (needs sudo).
+            let fc = try FanControl()
             try fc.setSpeed(fan: index, rpm: target)
             print("Fan \(index) → \(rpm) RPM")
         } else {
-            try fc.setAllFans(rpm: target)
-            let count = try fc.fanCount()
-            for i in 0..<count {
-                print("Fan \(i) → \(rpm) RPM")
+            try applyFanCommand(.setRPM(target)) {
+                try FanControl().setAllFans(rpm: target)
+            }
+            if let fc = try? FanControl(), let count = try? fc.fanCount() {
+                for i in 0..<count {
+                    print("Fan \(i) → \(rpm) RPM")
+                }
+            } else {
+                print("All fans → \(rpm) RPM")
             }
         }
     }
