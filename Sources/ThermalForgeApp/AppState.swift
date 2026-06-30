@@ -34,10 +34,19 @@ final class AppState {
     var launchAtLogin: Bool = false {
         didSet { updateLoginItem() }
     }
+    /// Minutes after which a non-default profile auto-reverts to Default.
+    /// 0 == off. Changing it re-arms the timer.
+    var autoRevertMinutes: Int = UserDefaults.standard.integer(forKey: "autoRevertMinutes") {
+        didSet {
+            UserDefaults.standard.set(autoRevertMinutes, forKey: "autoRevertMinutes")
+            armAutoRevert()
+        }
+    }
 
     @ObservationIgnored private var monitor: ThermalMonitor?
     @ObservationIgnored private let executor = PrivilegedExecutor()
     @ObservationIgnored private var heartbeatTimer: Timer?
+    @ObservationIgnored private var autoRevertTimer: Timer?
     /// Guards against re-entrant recursion when reverting the launchAtLogin
     /// toggle below (the revert re-fires the didSet).
     @ObservationIgnored private var isUpdatingLoginItem = false
@@ -66,6 +75,28 @@ final class AppState {
 
     deinit {
         heartbeatTimer?.invalidate()
+        autoRevertTimer?.invalidate()
+    }
+
+    // MARK: - Auto-revert
+
+    /// (Re)arm the auto-revert timer. Fires once after `autoRevertMinutes` and
+    /// reverts to Default. No-op when off or already on the default profile.
+    private func armAutoRevert() {
+        autoRevertTimer?.invalidate()
+        autoRevertTimer = nil
+        guard autoRevertMinutes > 0, activeProfile.id != "silent" else { return }
+
+        let minutes = autoRevertMinutes
+        autoRevertTimer = Timer.scheduledTimer(
+            withTimeInterval: TimeInterval(minutes * 60), repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                TFLogger.shared.profile("Auto-revert: \(minutes)min elapsed — reverting to Default")
+                self.resetAuto()
+            }
+        }
     }
 
     // MARK: - Heartbeat
@@ -161,6 +192,8 @@ final class AppState {
     }
 
     func resetAuto() {
+        autoRevertTimer?.invalidate()
+        autoRevertTimer = nil
         do {
             try executor.execute(.resetAuto)
             baseProfile = .silent
@@ -200,6 +233,11 @@ final class AppState {
         } catch {
             TFLogger.shared.error("Profile \(base.name) failed: \(error)")
         }
+
+        // (Re)arm the auto-revert timer for the newly applied profile. Routing
+        // this through applyProfile() covers both Smart and explicit selection;
+        // it is a no-op for Default (Silent).
+        armAutoRevert()
     }
 
     // MARK: - Launch at Login

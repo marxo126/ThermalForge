@@ -124,6 +124,20 @@ struct MenuBarView: View {
 
             Divider().padding(.vertical, 4)
 
+            // Auto-revert
+            SectionHeader(title: "AUTO-REVERT")
+            Picker("Auto-revert", selection: $appState.autoRevertMinutes) {
+                Text("Off").tag(0)
+                Text("After 15 min").tag(15)
+                Text("After 30 min").tag(30)
+                Text("After 60 min").tag(60)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+
+            Divider().padding(.vertical, 4)
+
             // Footer
             Toggle("Extra Cool", isOn: $appState.extraCool)
                 .padding(.horizontal, 12)
