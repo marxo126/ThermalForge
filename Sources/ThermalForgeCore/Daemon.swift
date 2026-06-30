@@ -16,8 +16,11 @@ public enum ThermalForgeDaemon {
     public static let socketPath = "/var/run/thermalforge.sock"
     public static let plistPath = "/Library/LaunchDaemons/com.thermalforge.daemon.plist"
     /// Install prefix, overridable via the THERMALFORGE_PREFIX env var so the
-    /// binary isn't pinned to /usr/local (e.g. Apple-silicon Homebrew lives at
-    /// /opt/homebrew). Defaults to /usr/local. (Issue #4.)
+    /// binary isn't hard-pinned to /usr/local. Defaults to /usr/local. (Issue #4.)
+    /// SECURITY: the daemon binary is launched as root, so its install directory
+    /// must be root-owned and not user-writable — the install command verifies
+    /// this and refuses otherwise. Do NOT point this at a user-writable Homebrew
+    /// prefix (e.g. /opt/homebrew) for the daemon install.
     public static let installPrefix =
         ProcessInfo.processInfo.environment["THERMALFORGE_PREFIX"] ?? "/usr/local"
     public static let installBinDir = installPrefix + "/bin"

@@ -171,7 +171,22 @@ final class AppState {
                 // while closed drives full SwiftUI layout for nothing.
                 if self.menuOpen, self.latestStatus != status { self.latestStatus = status }
                 if self.activeProfile != profile { self.activeProfile = profile }
-                if self.monitorState != state { self.monitorState = state }
+                if self.monitorState != state {
+                    self.monitorState = state
+                    // The 95°C safety override sends a one-shot manual `setMax`
+                    // even on the hands-off Silent default — where the heartbeat
+                    // is otherwise stopped. The daemon watchdog reverts manual
+                    // control after 15s without a heartbeat, so without this the
+                    // emergency fan-max is silently undone while the machine is
+                    // still ≥95°C. Keep the heartbeat alive for the duration of
+                    // the override, and stop it again once cleared on a hands-off
+                    // profile (fan-controlling profiles keep theirs via syncHeartbeat).
+                    if state == .safetyOverride {
+                        self.startHeartbeat()
+                    } else if self.activeProfile.curve.handsOff {
+                        self.stopHeartbeat()
+                    }
+                }
                 // Peak across all displayed CPU and GPU sensors for the menu bar.
                 // Quantize to whole degrees: the label shows an integer, so a
                 // jittering 0.1° fraction would otherwise force a relayout (CA

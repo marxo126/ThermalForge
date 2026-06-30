@@ -526,6 +526,15 @@ struct Install: ParsableCommand {
         abstract: "Install the background daemon (one-time, requires sudo)"
     )
 
+    /// True only if `path` is owned by root and not writable by group/other —
+    /// the safety requirement for a directory that holds a root-launched binary.
+    static func isRootOwnedNotUserWritable(_ path: String, fm: FileManager) -> Bool {
+        guard let attrs = try? fm.attributesOfItem(atPath: path) else { return false }
+        let owner = (attrs[.ownerAccountID] as? NSNumber)?.intValue ?? -1
+        let perms = (attrs[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o777
+        return owner == 0 && (perms & 0o022) == 0
+    }
+
     func run() throws {
         guard geteuid() == 0 else {
             throw ValidationError("Run with sudo: sudo thermalforge install")
@@ -542,6 +551,29 @@ struct Install: ParsableCommand {
         )
         try? fm.removeItem(atPath: installPath)
         try fm.copyItem(atPath: binaryPath, toPath: installPath)
+
+        // SECURITY: this binary is about to be launched as ROOT by launchd
+        // (RunAtLoad + KeepAlive). If its containing directory is writable by a
+        // non-root user, that user could replace the binary and have launchd run
+        // their code as root — local privilege escalation. Homebrew prefixes
+        // (/usr/local on Intel, /opt/homebrew on Apple Silicon) are owned by the
+        // installing admin user, so this is a real hazard. Pin the binary to
+        // root:wheel 0755 and refuse to register the daemon from a user-writable
+        // directory.
+        try? fm.setAttributes(
+            [.ownerAccountID: 0, .groupOwnerAccountID: 0, .posixPermissions: 0o755],
+            ofItemAtPath: installPath
+        )
+        guard Self.isRootOwnedNotUserWritable(ThermalForgeDaemon.installBinDir, fm: fm) else {
+            try? fm.removeItem(atPath: installPath)
+            throw ValidationError("""
+                Refusing to install a root daemon from \(ThermalForgeDaemon.installBinDir): \
+                that directory is writable by a non-root user, so a local user could replace \
+                the daemon binary and gain root. Install to a root-owned location (the default \
+                /usr/local/bin this installer creates is safe) or fix the directory ownership:
+                  sudo chown root:wheel \(ThermalForgeDaemon.installBinDir) && sudo chmod go-w \(ThermalForgeDaemon.installBinDir)
+                """)
+        }
 
         // Write launchd plist
         let plist = """
