@@ -114,6 +114,13 @@ struct MenuBarView: View {
                 .buttonStyle(.bordered)
                 .tint(.orange)
 
+                Button(action: { appState.maxFansNow() }) {
+                    Label("Max Now", systemImage: "fanblades.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+
                 Button(action: { appState.resetAuto() }) {
                     Label("Default", systemImage: "arrow.counterclockwise")
                         .frame(maxWidth: .infinity)
@@ -131,6 +138,19 @@ struct MenuBarView: View {
                 Text("After 15 min").tag(15)
                 Text("After 30 min").tag(30)
                 Text("After 60 min").tag(60)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+
+            Divider().padding(.vertical, 4)
+
+            // Menu-bar display (#20)
+            SectionHeader(title: "MENU BAR")
+            Picker("Menu bar", selection: $appState.menuBarDisplay) {
+                ForEach(MenuBarDisplay.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
             }
             .pickerStyle(.inline)
             .labelsHidden()

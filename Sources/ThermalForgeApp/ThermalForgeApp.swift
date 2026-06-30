@@ -39,7 +39,13 @@ struct ThermalForgeApp: App {
             MenuBarView()
                 .environment(appState)
         } label: {
-            MenuBarLabel(state: appState.monitorState, maxTemp: appState.maxTemp, fahrenheit: appState.useFahrenheit)
+            MenuBarLabel(
+                state: appState.monitorState,
+                display: appState.menuBarDisplay,
+                maxTemp: appState.maxTemp,
+                maxFanRPM: appState.maxFanRPM,
+                fahrenheit: appState.useFahrenheit
+            )
         }
         .menuBarExtraStyle(.window)
     }
@@ -49,16 +55,28 @@ struct ThermalForgeApp: App {
 
 struct MenuBarLabel: View {
     let state: MonitorState
+    var display: MenuBarDisplay = .temperature
     let maxTemp: Float?
+    var maxFanRPM: Int? = nil
     var fahrenheit: Bool = false
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: iconName)
-            if let tempC = maxTemp {
-                let display = fahrenheit ? tempC * 9 / 5 + 32 : tempC
-                Text("\(Int(display))°")
-                    .font(.system(.caption, design: .monospaced))
+            switch display {
+            case .temperature:
+                if let tempC = maxTemp {
+                    let value = fahrenheit ? tempC * 9 / 5 + 32 : tempC
+                    Text("\(Int(value))°")
+                        .font(.system(.caption, design: .monospaced))
+                }
+            case .fanSpeed:
+                if let rpm = maxFanRPM {
+                    Text("\(rpm)")
+                        .font(.system(.caption, design: .monospaced))
+                }
+            case .iconOnly:
+                EmptyView()
             }
         }
     }

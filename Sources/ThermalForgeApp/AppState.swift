@@ -10,6 +10,22 @@ import ServiceManagement
 import SwiftUI
 @preconcurrency import ThermalForgeCore
 
+/// What the menu-bar label displays. (Feature request #20.)
+enum MenuBarDisplay: String, CaseIterable, Identifiable {
+    case temperature
+    case fanSpeed
+    case iconOnly
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .temperature: return "Temperature"
+        case .fanSpeed: return "Fan speed"
+        case .iconOnly: return "Icon only"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -17,8 +33,17 @@ final class AppState {
     var activeProfile: FanProfile = .silent
     var monitorState: MonitorState = .idle
     var maxTemp: Float?
+    /// Peak fan RPM across all fans, for the menu-bar label's "Fan speed" mode.
+    var maxFanRPM: Int?
     var useFahrenheit: Bool = UserDefaults.standard.bool(forKey: "useFahrenheit") {
         didSet { UserDefaults.standard.set(useFahrenheit, forKey: "useFahrenheit") }
+    }
+    /// What the menu-bar label shows: temperature (default), fan speed, or icon
+    /// only. Persisted. (Feature request #20.)
+    var menuBarDisplay: MenuBarDisplay =
+        MenuBarDisplay(rawValue: UserDefaults.standard.string(forKey: "menuBarDisplay") ?? "")
+        ?? .temperature {
+        didSet { UserDefaults.standard.set(menuBarDisplay.rawValue, forKey: "menuBarDisplay") }
     }
     /// Extra Cool: a sticky modifier that shifts the active profile colder and
     /// louder. The toggle is persisted; the *selected profile* deliberately is
@@ -157,6 +182,10 @@ final class AppState {
                     .values.max()
                     .map { $0.rounded() }
                 if self.maxTemp != newMax { self.maxTemp = newMax }
+                // Peak fan RPM, maintained every tick (independent of the menu
+                // visibility gate) so the menu-bar label can show it on demand.
+                let newRPM = status.fans.map(\.actualRPM).max()
+                if self.maxFanRPM != newRPM { self.maxFanRPM = newRPM }
             }
         }
         // Fan commands run off the main thread, coalesced. The ramp fires
@@ -189,6 +218,21 @@ final class AppState {
 
     func setSmart() {
         applyProfile(.smart)
+    }
+
+    /// One-tap "Max Fans Now" (feature request #21): drive all fans to maximum
+    /// immediately, independent of the temperature-gated profile logic that
+    /// makes the Max *profile* hold off until ~65°C (issue #10). The instant
+    /// `.setMax` is sent now so fans jump even on a cool machine; switching to
+    /// the Max profile then maintains them and keeps the heartbeat alive.
+    func maxFansNow() {
+        applyProfile(.max)
+        do {
+            try executor.execute(.setMax)
+            TFLogger.shared.profile("Max Fans Now — all fans to maximum")
+        } catch {
+            TFLogger.shared.error("Max Fans Now failed: \(error)")
+        }
     }
 
     func resetAuto() {
