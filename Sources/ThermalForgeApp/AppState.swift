@@ -173,19 +173,25 @@ final class AppState {
                 if self.activeProfile != profile { self.activeProfile = profile }
                 if self.monitorState != state {
                     self.monitorState = state
-                    // The 95°C safety override sends a one-shot manual `setMax`
-                    // even on the hands-off Silent default — where the heartbeat
-                    // is otherwise stopped. The daemon watchdog reverts manual
-                    // control after 15s without a heartbeat, so without this the
-                    // emergency fan-max is silently undone while the machine is
-                    // still ≥95°C. Keep the heartbeat alive for the duration of
-                    // the override, and stop it again once cleared on a hands-off
-                    // profile (fan-controlling profiles keep theirs via syncHeartbeat).
-                    if state == .safetyOverride {
-                        self.startHeartbeat()
-                    } else if self.activeProfile.curve.handsOff {
+                    // Once the override clears on a hands-off profile, the
+                    // heartbeat is no longer needed.
+                    if state != .safetyOverride, self.activeProfile.curve.handsOff {
                         self.stopHeartbeat()
                     }
+                }
+                // The 95°C safety override sends a one-shot manual `setMax` even
+                // on the hands-off Silent default, where the heartbeat is
+                // otherwise stopped. The daemon watchdog reverts manual control
+                // after 15s without a heartbeat, so the emergency fan-max would be
+                // silently undone while still ≥95°C. Keep the heartbeat alive for
+                // the WHOLE duration of the override — UNCONDITIONALLY, not just on
+                // the leading edge: a profile switch during an override resets the
+                // monitor's internal state without an onUpdate, so the next
+                // re-assert can arrive with monitorState already == .safetyOverride
+                // and would skip a transition-gated start. startHeartbeat() no-ops
+                // when already running.
+                if state == .safetyOverride {
+                    self.startHeartbeat()
                 }
                 // Peak across all displayed CPU and GPU sensors for the menu bar.
                 // Quantize to whole degrees: the label shows an integer, so a

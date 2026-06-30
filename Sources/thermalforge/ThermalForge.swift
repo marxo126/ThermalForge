@@ -564,7 +564,8 @@ struct Install: ParsableCommand {
             [.ownerAccountID: 0, .groupOwnerAccountID: 0, .posixPermissions: 0o755],
             ofItemAtPath: installPath
         )
-        guard Self.isRootOwnedNotUserWritable(ThermalForgeDaemon.installBinDir, fm: fm) else {
+        guard Self.isRootOwnedNotUserWritable(installPath, fm: fm),
+              Self.isRootOwnedNotUserWritable(ThermalForgeDaemon.installBinDir, fm: fm) else {
             try? fm.removeItem(atPath: installPath)
             throw ValidationError("""
                 Refusing to install a root daemon from \(ThermalForgeDaemon.installBinDir): \
