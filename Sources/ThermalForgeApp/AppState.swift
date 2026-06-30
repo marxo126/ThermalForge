@@ -242,27 +242,22 @@ final class AppState {
     /// the Max profile then maintains them and keeps the heartbeat alive.
     func maxFansNow() {
         applyProfile(.max)
-        do {
-            try executor.execute(.setMax)
-            TFLogger.shared.profile("Max Fans Now — all fans to maximum")
-        } catch {
-            TFLogger.shared.error("Max Fans Now failed: \(error)")
-        }
+        // Coalesced channel (same as the monitor): lands after applyProfile's
+        // reset above instead of racing it, and never blocks the UI thread.
+        executor.submit(.setMax)
+        TFLogger.shared.profile("Max Fans Now — all fans to maximum")
     }
 
     func resetAuto() {
         autoRevertTimer?.invalidate()
         autoRevertTimer = nil
-        do {
-            try executor.execute(.resetAuto)
-            baseProfile = .silent
-            activeProfile = .silent
-            monitor?.switchProfile(.silent)
-            stopHeartbeat()
-            TFLogger.shared.profile("Reset to Default (Silent (Apple Default))")
-        } catch {
-            TFLogger.shared.error("Reset to Default failed: \(error)")
-        }
+        // Coalesced + off-thread so a stuck daemon can't freeze the UI.
+        executor.submit(.resetAuto)
+        baseProfile = .silent
+        activeProfile = .silent
+        monitor?.switchProfile(.silent)
+        stopHeartbeat()
+        TFLogger.shared.profile("Reset to Default (Silent (Apple Default))")
     }
 
     func selectProfile(_ profile: FanProfile) {
@@ -287,11 +282,10 @@ final class AppState {
         // they are off — e.g. when toggling Extra Cool shifts the start
         // threshold past the current temperature. tick() re-engages within one
         // cycle, so the only cost is a brief return to Apple's curve.
-        do {
-            try executor.execute(.resetAuto)
-        } catch {
-            TFLogger.shared.error("Profile \(base.name) failed: \(error)")
-        }
+        // Routed through the coalesced channel (same as the monitor) so a
+        // slow/stuck daemon can't stall the profile switch on the main thread,
+        // and a late monitor tick can't overtake this reset.
+        executor.submit(.resetAuto)
 
         // (Re)arm the auto-revert timer for the newly applied profile. Routing
         // this through applyProfile() covers both Smart and explicit selection;

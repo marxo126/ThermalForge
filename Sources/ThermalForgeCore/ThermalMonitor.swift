@@ -215,6 +215,17 @@ public final class ThermalMonitor {
             }
 
             state = .idle
+
+            // Restore the fast cadence immediately. If the monitor had relaxed
+            // to the idle rate (up to ~5s on hands-off Silent), the new profile's
+            // first fan-engagement decision would otherwise be delayed by a whole
+            // idle interval. Runs on the same queue as applyCadence(), so there
+            // is no timer race.
+            consecutiveIdleTicks = 0
+            if tickInterval != activeInterval {
+                tickInterval = activeInterval
+                if let timer { scheduleTimer(timer, interval: activeInterval) }
+            }
         }
     }
 
