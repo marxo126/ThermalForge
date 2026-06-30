@@ -377,4 +377,17 @@ struct ProfileTests {
         #expect(FanProfile.max.curve.sustainedTriggerSec == 5)          // Attack dog threshold
         #expect(FanProfile.smart.curve.sustainedTriggerSec == 6)        // Proactive
     }
+
+    // MARK: - Default profile (#9)
+
+    @Test("Out-of-box default is Silent (hands-off) and listed first")
+    func defaultProfileIsSilentHandsOff() {
+        // Issue #9: the out-of-box default must be the safe, hands-off Silent
+        // profile (Apple's own fan curve), not an active-cooling profile. A
+        // fork's flip to Smart-by-default was rejected as a behavior regression;
+        // this pins the decision so it can't drift silently. AppState's initial
+        // activeProfile = .silent mirrors this ordering.
+        #expect(FanProfile.builtIn.first?.id == "silent")
+        #expect(FanProfile.silent.curve.handsOff == true)
+    }
 }
