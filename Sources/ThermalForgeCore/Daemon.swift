@@ -15,7 +15,13 @@ import IOKit.pwr_mgt
 public enum ThermalForgeDaemon {
     public static let socketPath = "/var/run/thermalforge.sock"
     public static let plistPath = "/Library/LaunchDaemons/com.thermalforge.daemon.plist"
-    public static let installPath = "/usr/local/bin/thermalforge"
+    /// Install prefix, overridable via the THERMALFORGE_PREFIX env var so the
+    /// binary isn't pinned to /usr/local (e.g. Apple-silicon Homebrew lives at
+    /// /opt/homebrew). Defaults to /usr/local. (Issue #4.)
+    public static let installPrefix =
+        ProcessInfo.processInfo.environment["THERMALFORGE_PREFIX"] ?? "/usr/local"
+    public static let installBinDir = installPrefix + "/bin"
+    public static let installPath = installBinDir + "/thermalforge"
     public static let label = "com.thermalforge.daemon"
 
     /// Check if the daemon socket exists and accepts connections

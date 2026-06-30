@@ -534,10 +534,10 @@ struct Install: ParsableCommand {
         let binaryPath = ProcessInfo.processInfo.arguments[0]
         let installPath = ThermalForgeDaemon.installPath
 
-        // Copy binary to /usr/local/bin
+        // Copy binary to the install bin dir (THERMALFORGE_PREFIX/bin; #4)
         let fm = FileManager.default
         try? fm.createDirectory(
-            atPath: "/usr/local/bin",
+            atPath: ThermalForgeDaemon.installBinDir,
             withIntermediateDirectories: true
         )
         try? fm.removeItem(atPath: installPath)
