@@ -27,6 +27,9 @@ final class AppState {
     @ObservationIgnored private var monitor: ThermalMonitor?
     @ObservationIgnored private let executor = PrivilegedExecutor()
     @ObservationIgnored private var heartbeatTimer: Timer?
+    /// Guards against re-entrant recursion when reverting the launchAtLogin
+    /// toggle below (the revert re-fires the didSet).
+    @ObservationIgnored private var isUpdatingLoginItem = false
     /// Whether the dropdown panel is currently shown. The panel's hosting view
     /// stays alive while hidden and re-renders on any observed change, so we
     /// only feed it the per-tick `latestStatus` while it's actually visible.
@@ -181,6 +184,10 @@ final class AppState {
     // MARK: - Launch at Login
 
     private func updateLoginItem() {
+        // Reverting the toggle in the catch below re-fires this didSet. Without
+        // this guard, a persistently throwing SMAppService recurses until the
+        // stack overflows (SIGSEGV). The guard makes the revert a no-op re-entry.
+        guard !isUpdatingLoginItem else { return }
         do {
             if launchAtLogin {
                 try SMAppService.mainApp.register()
@@ -189,7 +196,9 @@ final class AppState {
             }
         } catch {
             TFLogger.shared.error("Launch at login toggle failed: \(error)")
-            launchAtLogin = !launchAtLogin // revert toggle
+            isUpdatingLoginItem = true
+            launchAtLogin = !launchAtLogin // revert toggle (guarded against re-entry)
+            isUpdatingLoginItem = false
         }
     }
 }
