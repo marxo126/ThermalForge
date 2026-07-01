@@ -15,23 +15,23 @@ Built in 2026 with Swift. No subscriptions, no telemetry, no ads.
 
 Tools like **Macs Fan Control** and **TG Pro** charge $15–$20 for fan control that hasn't fundamentally improved in years. Both require manual configuration, neither learns anything about your machine, and both have documented problems on Apple Silicon.
 
-| Feature | ThermalForge | Macs Fan Control | TG Pro |
-|---|---|---|---|
-| Smart adaptive fan curve | **Yes** | No | No |
-| Machine-specific calibration | **Coming soon** | No | No |
-| Multi-sensor safety | **Yes — all sensors** | [One sensor per fan](https://github.com/crystalidea/macs-fan-control/issues/266) | Manual rules only |
-| Proactive cooling (ramps before throttle) | **Yes** | No | No |
-| Fan curve type | Per-profile shapes (ease-in, linear, S-curve, instant) | Linear between 2 points | Manual step-function |
-| Real-time temp monitoring | Yes | Yes | Yes |
-| Menu bar app | Yes | Yes | Yes |
-| CLI access | **Yes** | No | No |
-| Thermal data logging (CSV) | **Yes** | No | Yes |
-| Process correlation in logs | **Yes** | No | No |
-| Sleep/wake re-apply | Yes | Yes | Yes |
-| Safety override (95°C) | **Yes — always active** | No | Requires manual setup |
-| Crash recovery (heartbeat watchdog) | **Yes** | Reverts on quit only | Override removes macOS safety |
-| Open source | **Yes** | No | No |
-| Price | **Free** | $15 | $20 |
+| Feature                                   | ThermalForge                                           | Macs Fan Control                                                                 | TG Pro                        |
+| ----------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------- |
+| Smart adaptive fan curve                  | **Yes**                                                | No                                                                               | No                            |
+| Machine-specific calibration              | **Coming soon**                                        | No                                                                               | No                            |
+| Multi-sensor safety                       | **Yes — all sensors**                                  | [One sensor per fan](https://github.com/crystalidea/macs-fan-control/issues/266) | Manual rules only             |
+| Proactive cooling (ramps before throttle) | **Yes**                                                | No                                                                               | No                            |
+| Fan curve type                            | Per-profile shapes (ease-in, linear, S-curve, instant) | Linear between 2 points                                                          | Manual step-function          |
+| Real-time temp monitoring                 | Yes                                                    | Yes                                                                              | Yes                           |
+| Menu bar app                              | Yes                                                    | Yes                                                                              | Yes                           |
+| CLI access                                | **Yes**                                                | No                                                                               | No                            |
+| Thermal data logging (CSV)                | **Yes**                                                | No                                                                               | Yes                           |
+| Process correlation in logs               | **Yes**                                                | No                                                                               | No                            |
+| Sleep/wake re-apply                       | Yes                                                    | Yes                                                                              | Yes                           |
+| Safety override (95°C)                    | **Yes — always active**                                | No                                                                               | Requires manual setup         |
+| Crash recovery (heartbeat watchdog)       | **Yes**                                                | Reverts on quit only                                                             | Override removes macOS safety |
+| Open source                               | **Yes**                                                | No                                                                               | No                            |
+| Price                                     | **Free**                                               | $15                                                                              | $20                           |
 
 ### Known problems with alternatives
 
@@ -60,15 +60,16 @@ Every profile uses a proportional curve with a per-profile curve shape — fans 
 
 Thermal polling runs at 100ms (matching Apple's own thermalmonitord cadence) for smooth fan transitions. Each profile has its own ramp rates and curve shape tuned to its purpose. Ramp governor design sourced from [MAX31760 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/max31760.pdf) and [Microchip AN771](https://ww1.microchip.com/downloads/en/appnotes/00771a.pdf).
 
-| Profile | Fans off | Fans start | Ceiling | Max fan | Curve | Sustained trigger | Behavior |
-|---|---|---|---|---|---|---|---|
-| **Silent (Apple Default)** | N/A | N/A | N/A | Apple | N/A | N/A | Monitoring only. Apple controls fans. |
-| **Balanced** | 50°C | 55°C | 70°C | 60% | Ease-in (pos²) | 8 seconds | Quiet at low temps, ramps harder as heat builds. |
-| **Performance** | 50°C | 55°C | 65°C | 85% | Linear | 4 seconds | Direct proportional response, 2× ramp-up speed. |
-| **Max** | 50°C | 65°C | — | 100% | Instant | 5 seconds | Attack dog: instant 100% when triggered, S-curve ramp-down. |
-| **Smart** | 50°C | 53°C | 85°C | 100% | S-curve | 6 seconds | Proactive with rate-of-change awareness. Starts 2°C earlier. |
+| Profile                    | Fans off | Fans start | Ceiling | Max fan | Curve          | Sustained trigger | Behavior                                                     |
+| -------------------------- | -------- | ---------- | ------- | ------- | -------------- | ----------------- | ------------------------------------------------------------ |
+| **Silent (Apple Default)** | N/A      | N/A        | N/A     | Apple   | N/A            | N/A               | Monitoring only. Apple controls fans.                        |
+| **Balanced**               | 50°C     | 55°C       | 70°C    | 60%     | Ease-in (pos²) | 8 seconds         | Quiet at low temps, ramps harder as heat builds.             |
+| **Performance**            | 50°C     | 55°C       | 65°C    | 85%     | Linear         | 4 seconds         | Direct proportional response, 2× ramp-up speed.              |
+| **Max**                    | 50°C     | 65°C       | —       | 100%    | Instant        | 5 seconds         | Attack dog: instant 100% when triggered, S-curve ramp-down.  |
+| **Smart**                  | 50°C     | 53°C       | 85°C    | 100%    | S-curve        | 6 seconds         | Proactive with rate-of-change awareness. Starts 2°C earlier. |
 
 **How profiles work:**
+
 - **Below 50°C:** All fans off. Machine is at idle.
 - **50°C–start (hysteresis zone):** Fans maintain current state. Already running → stay at minimum. Already off → stay off.
 - **Above start for N seconds:** Fans engage. Balanced and Performance ramp proportionally using their curve shape. Max jumps instantly to 100%.
@@ -145,21 +146,27 @@ The daemon's heartbeat watchdog detects the app is gone within 15 seconds and re
 ### Resets and troubleshooting
 
 **Reset fans right now:**
+
 ```bash
 thermalforge auto
 ```
+
 Kills the app and resets fans to Apple defaults.
 
 **Emergency reset (if nothing else works):**
+
 ```bash
 sudo killall ThermalForgeApp && sudo /usr/local/bin/thermalforge auto
 ```
+
 Force-kills the app and resets fans directly via the daemon.
 
 **Completely remove ThermalForge:**
+
 ```bash
 sudo thermalforge uninstall
 ```
+
 Removes the daemon, binary, app, and all logs. Clean slate.
 
 If installed via Homebrew, run `brew uninstall thermalforge` first.
@@ -183,14 +190,17 @@ thermalforge log --rate 10 --duration 1h --no-expire   # 10Hz for 1 hour, keep f
 
 ## Compatibility
 
-Tested on MacBook Pro M5 Max (Mac17,7). Should work on M1–M5 MacBooks.
-Run `thermalforge discover` on your machine and [submit a compatibility report](../../issues/new?template=compatibility-report.md).
+Should work on M1–M5 MacBooks. This fork records real, reproducible fan-control
+and test results per machine in [`COMPATIBILITY.md`](COMPATIBILITY.md) —
+verified: **Mac16,5 / Apple M4 Max** (2 fans, 1350→5777 RPM, 45/45 tests).
+Run `thermalforge status` and `thermalforge discover` on your machine (read-only,
+no sudo) and add a row.
 
-| Machine | Chip | Status |
-|---|---|---|
-| MacBook Pro 16" (2025) | M5 Max | Tested |
-| Mac Studio (2022) | M2 Ultra | Tested |
-| MacBook Pro 16" (2021) | M1 Max | Tested |
+| Machine                | Chip     | Status |
+| ---------------------- | -------- | ------ |
+| MacBook Pro 16" (2025) | M5 Max   | Tested |
+| Mac Studio (2022)      | M2 Ultra | Tested |
+| MacBook Pro 16" (2021) | M1 Max   | Tested |
 
 SMC key names vary across chip generations — ThermalForge auto-detects at startup. The `discover` command dumps all keys so we can verify what your hardware uses. The more machines tested, the more robust ThermalForge becomes.
 
@@ -243,10 +253,10 @@ thermalforge log --rate 10 --duration 1h --no-expire      # 10Hz, 1 hour, keep f
 
 Each session produces a self-contained folder:
 
-| File | Contents |
-|---|---|
-| **thermal.csv** | Timestamped readings from every detected temperature sensor, fan RPM (actual + target), fan mode, at every sample interval |
-| **processes.csv** | Top 5 processes by CPU utilization at every sample — the missing link between thermal data and what caused it |
+| File              | Contents                                                                                                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **thermal.csv**   | Timestamped readings from every detected temperature sensor, fan RPM (actual + target), fan mode, at every sample interval                                  |
+| **processes.csv** | Top 5 processes by CPU utilization at every sample — the missing link between thermal data and what caused it                                               |
 | **metadata.json** | Machine model, chip, OS version, ThermalForge version, fan count, RPM range, sample rate, complete sensor dictionary, session start/end, total sample count |
 
 ### Why this format
@@ -289,23 +299,27 @@ thermalforge compare smart-baseline fixed-75
 ```
 
 **Controlled variables:**
+
 - Fan speed: any profile, fixed percentage, or Smart
 - Workload type: CPU stress, GPU stress (Metal compute), CPU+GPU combined, idle baseline, or any custom command
 - Duration with automatic steady-state detection (temp change <0.5°C over 2 minutes)
 - Ambient temperature input for Delta-T calculations
 
 **Metrics generated per experiment:**
+
 - Time-to-throttle — how long before the chip starts losing performance
 - Time-to-steady-state — how long before temperature stabilizes
 - Sustained performance score — average clock throughput over the test duration
 - Statistical summary — mean, std dev, min, max, P95/P99 temps
 
 **Comparison reports:**
+
 - Side-by-side A/B results across experiments
 - Automatic detection of statistically significant differences
 - Export as CSV or formatted summary
 
 **Built-in workloads:**
+
 - CPU stress: saturates all cores with compute-bound work
 - GPU stress: Metal compute shaders that load the GPU pipeline
 - Combined: CPU + GPU simultaneously (the real-world worst case for Apple Silicon where CPU, GPU, and Neural Engine share the same die and unified memory)
