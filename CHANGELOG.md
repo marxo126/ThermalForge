@@ -8,6 +8,18 @@ Every change was applied on top of the `PR #16` performance/structural
 refactor, builds cleanly on Swift 6.3.2, and passes the test suite (45 tests).
 Original authorship is preserved on each integrated change.
 
+### First-run installer + DMG
+
+- **In-app daemon setup:** the menu-bar app now installs the privileged
+  fan-control daemon itself — a first-run prompt and an in-menu "Install
+  fan-control daemon" banner run the bundled `thermalforge install` with one
+  standard macOS admin prompt (no terminal needed). Strips quarantine via an
+  absolute `/usr/bin/xattr` (a bare name could resolve to an attacker binary run
+  as root), and inherits the hardened `install` (root-owned-dir guard + rollback).
+- **DMG installer:** `Scripts/build-dmg.sh` produces a drag-to-Applications
+  `ThermalForge.dmg` (menu-bar `.app` + bundled CLI). Unsigned — first launch is
+  right-click → Open.
+
 ### Integrated pull requests & fork work
 
 | Source                                           | What it does                                                                                                                                                                                                                                                                                           | Resolves               |

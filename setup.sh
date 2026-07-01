@@ -34,6 +34,8 @@ APP_DIR="/Applications/ThermalForge.app/Contents"
 sudo mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
 sudo cp .build/release/ThermalForgeApp "$APP_DIR/MacOS/ThermalForgeApp"
 sudo cp ThermalForge.icns "$APP_DIR/Resources/AppIcon.icns"
+# Bundle the CLI so the app's in-menu setup helper can (re)install the daemon.
+sudo cp .build/release/thermalforge "$APP_DIR/Resources/thermalforge"
 sudo find /Applications/ThermalForge.app -exec xattr -c {} + 2>/dev/null || true
 
 sudo tee "$APP_DIR/Info.plist" > /dev/null << 'PLIST'

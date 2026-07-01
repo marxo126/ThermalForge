@@ -35,6 +35,12 @@ final class AppState {
     var maxTemp: Float?
     /// Peak fan RPM across all fans, for the menu-bar label's "Fan speed" mode.
     var maxFanRPM: Int?
+    /// Whether the privileged fan-control daemon is installed. Drives the
+    /// one-time setup banner in the menu.
+    var daemonInstalled: Bool = DaemonInstaller.isInstalled
+    /// Message shown under the setup banner after an install attempt (e.g. an
+    /// error, or the security refusal on a user-writable prefix).
+    var daemonStatusMessage: String?
     var useFahrenheit: Bool = UserDefaults.standard.bool(forKey: "useFahrenheit") {
         didSet { UserDefaults.standard.set(useFahrenheit, forKey: "useFahrenheit") }
     }
@@ -228,11 +234,38 @@ final class AppState {
     func menuDidOpen() {
         menuOpen = true
         if let status = lastStatus, latestStatus != status { latestStatus = status }
+        // Refresh the daemon-setup banner in case it was installed elsewhere.
+        let installed = DaemonInstaller.isInstalled
+        if daemonInstalled != installed { daemonInstalled = installed }
     }
 
     /// Called when the panel is dismissed: stop feeding the hidden hosting view.
     func menuDidClose() {
         menuOpen = false
+    }
+
+    // MARK: - Daemon setup
+
+    /// Install the privileged fan-control daemon via the first-run helper (one
+    /// admin prompt). Updates the banner state and surfaces any error message.
+    func installDaemon() {
+        switch DaemonInstaller.install() {
+        case .installed:
+            daemonInstalled = true
+            daemonStatusMessage = nil
+            // Start from a clean fan state now that the daemon is up.
+            executor.submit(.resetAuto)
+            TFLogger.shared.info("Fan-control daemon installed")
+        case .cancelled:
+            daemonStatusMessage = nil
+        case .noBundledBinary:
+            daemonStatusMessage = "Setup unavailable — run from the installed app "
+                + "(drag to Applications), or install via Terminal: sudo thermalforge install"
+        case .failed(let msg):
+            daemonInstalled = DaemonInstaller.isInstalled
+            daemonStatusMessage = msg
+            TFLogger.shared.error("Daemon install failed: \(msg)")
+        }
     }
 
     // MARK: - Actions

@@ -27,6 +27,31 @@ struct MenuBarView: View {
 
             Divider()
 
+            // One-time setup: fan control needs the privileged daemon installed
+            // before anything works. Surface it in the UI instead of a terminal.
+            if !appState.daemonInstalled {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Fan control needs a one-time setup")
+                        .font(.callout).fontWeight(.medium)
+                    Text("Installs a small background service (asks for your password once).")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        appState.installDaemon()
+                    } label: {
+                        Label("Install fan-control daemon", systemImage: "bolt.shield")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    if let msg = appState.daemonStatusMessage {
+                        Text(msg).font(.caption).foregroundStyle(.red)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                Divider()
+            }
+
             // Fan speeds
             if let status = appState.latestStatus {
                 SectionHeader(title: "FANS")

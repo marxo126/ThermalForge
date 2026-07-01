@@ -33,6 +33,9 @@ rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/ThermalForgeApp "$APP/Contents/MacOS/ThermalForgeApp"
 cp ThermalForge.icns "$APP/Contents/Resources/AppIcon.icns"
+# Bundle the CLI/daemon binary so the app's first-run helper can install the
+# privileged daemon itself (one admin prompt), no terminal needed.
+cp .build/release/thermalforge "$APP/Contents/Resources/thermalforge"
 
 cat > "$APP/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>

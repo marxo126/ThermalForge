@@ -8,7 +8,8 @@
 import SwiftUI
 import ThermalForgeCore
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon — menu bar only
         NSApp.setActivationPolicy(.accessory)
@@ -19,6 +20,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if running.count > 1 {
             TFLogger.shared.error("Another instance already running — quitting")
             NSApp.terminate(nil)
+        }
+
+        offerDaemonSetupIfNeeded()
+    }
+
+    /// First-run helper: if the privileged fan-control daemon isn't installed
+    /// yet, offer to install it once (one admin prompt). Subsequent launches
+    /// rely on the in-menu setup banner instead of nagging.
+    private func offerDaemonSetupIfNeeded() {
+        guard !DaemonInstaller.isInstalled else { return }
+        let offeredKey = "didOfferDaemonInstall"
+        guard !UserDefaults.standard.bool(forKey: offeredKey) else { return }
+        UserDefaults.standard.set(true, forKey: offeredKey)
+
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Set up ThermalForge fan control"
+        alert.informativeText = "ThermalForge installs a small background service to control your "
+            + "fans. macOS will ask for your password once. You can also do this later from the "
+            + "menu-bar dropdown."
+        alert.addButton(withTitle: "Install")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            _ = DaemonInstaller.install()
         }
     }
 
