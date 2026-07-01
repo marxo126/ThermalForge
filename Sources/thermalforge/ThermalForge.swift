@@ -24,6 +24,7 @@ struct ThermalForge: ParsableCommand {
             Watch.self,
             Calibrate.self,
             Log.self,
+            Stats.self,
             Install.self,
             Uninstall.self,
             Daemon.self,
@@ -501,6 +502,12 @@ struct Log: ParsableCommand {
         print("  thermal.csv   — sensor readings + fan state")
         print("  processes.csv — top processes by CPU")
         print("  metadata.json — session info + data dictionary")
+        print("  summary.json  — computed stats (machine-readable)")
+        print("  summary.txt   — computed stats (human-readable)")
+        if let summary = logger.summary {
+            print("")
+            print(summary.plainText())
+        }
     }
 
     private func parseDuration(_ s: String) -> TimeInterval? {
@@ -515,6 +522,55 @@ struct Log: ParsableCommand {
         if t >= 3600 { return "\(Int(t / 3600))h" }
         if t >= 60 { return "\(Int(t / 60))m" }
         return "\(Int(t))s"
+    }
+}
+
+// MARK: - Stats
+
+struct Stats: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "stats",
+        abstract: "Show the computed summary for a log session (latest by default)"
+    )
+
+    @Argument(help: "A log session directory or its summary.json. Omit for the most recent session.")
+    var path: String?
+
+    func run() throws {
+        let url = try Self.resolveSummary(path)
+        let summary = try JSONDecoder().decode(LogSummary.self, from: Data(contentsOf: url))
+        print(summary.plainText())
+    }
+
+    /// Resolve which summary.json to read: an explicit dir/file, or the most
+    /// recent session under the logs directory.
+    static func resolveSummary(_ path: String?) throws -> URL {
+        let fm = FileManager.default
+        if let path {
+            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
+                throw ValidationError("No such path: \(url.path)")
+            }
+            let summary = isDir.boolValue ? url.appendingPathComponent("summary.json") : url
+            guard fm.fileExists(atPath: summary.path) else {
+                throw ValidationError("No summary.json at \(summary.path). Run `thermalforge log` first.")
+            }
+            return summary
+        }
+        let logsDir = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/ThermalForge/logs")
+        let sessions = (try? fm.contentsOfDirectory(at: logsDir, includingPropertiesForKeys: nil)) ?? []
+        // Session dir names are timestamped (thermalforge_log_<iso>), so a
+        // reverse lexicographic sort gives the most recent first.
+        let latest = sessions
+            .filter { fm.fileExists(atPath: $0.appendingPathComponent("summary.json").path) }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .first
+        guard let latest else {
+            throw ValidationError("No log sessions found. Run `thermalforge log` first.")
+        }
+        return latest.appendingPathComponent("summary.json")
     }
 }
 

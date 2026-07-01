@@ -52,8 +52,12 @@ public final class ThermalLogger {
     private var sampleCount = 0
     private var running = true
     private let isoFormatter = ISO8601DateFormatter()
+    private let stats = LogStatsAccumulator()
 
     public var onSample: ((String) -> Void)?
+
+    /// Computed statistics for the session, available after `run()` returns.
+    public private(set) var summary: LogSummary?
 
     public init(fanControl: FanControl, rateHz: Double = 1.0, duration: TimeInterval? = nil,
                 outputDir: URL? = nil, noExpire: Bool = false) throws {
@@ -165,6 +169,12 @@ public final class ThermalLogger {
             }
             write(to: csvHandle, row + "\n")
 
+            // Accumulate stats for the end-of-session summary.
+            stats.add(
+                fans: status.fans.map { (index: $0.index, rpm: $0.actualRPM) },
+                temps: status.temperatures.mapValues(Double.init)
+            )
+
             // Process snapshot
             let procs = topProcesses(limit: 5)
             for proc in procs {
@@ -196,6 +206,19 @@ public final class ThermalLogger {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let metaData = try encoder.encode(metadata)
         try metaData.write(to: metaPath)
+
+        // Compute + persist the session summary (stats): summary.json for tools,
+        // summary.txt for humans. Exposed via `summary` for the CLI to print.
+        let elapsed = Date().timeIntervalSince(startTime)
+        let sessionSummary = stats.summary(
+            durationSeconds: elapsed,
+            sampleRateHz: metadata.sampleRateHz,
+            fanCeilingRPM: metadata.maxRPM
+        )
+        summary = sessionSummary
+        try encoder.encode(sessionSummary).write(to: outputDir.appendingPathComponent("summary.json"))
+        try sessionSummary.plainText().data(using: .utf8)?
+            .write(to: outputDir.appendingPathComponent("summary.txt"))
 
         // Schedule auto-delete if not --no-expire
         if !noExpire {

@@ -8,6 +8,20 @@ Every change was applied on top of the `PR #16` performance/structural
 refactor, builds cleanly on Swift 6.3.2, and passes the test suite (45 tests).
 Original authorship is preserved on each integrated change.
 
+### Improved thermal logging & stats
+
+The `log` command previously wrote only raw per-sample CSVs — you had to
+post-process them yourself. Now every session also gets computed statistics:
+
+- **`summary.json` + `summary.txt`** written on finish: duration, sample count,
+  per-fan RPM min/avg/max (and average % of the fan's ceiling), CPU/GPU peak &
+  average, and every sensor's min/avg/max ranked by peak.
+- **`thermalforge log`** prints that summary when it finishes.
+- **New `thermalforge stats [path]`** command: prints the summary for a past
+  session (the most recent by default) without re-running a log.
+- Stats math lives in a standalone, unit-tested `LogStatsAccumulator`
+  (streaming, O(1) memory per key). Verified on M4 Max.
+
 ### First-run installer + DMG
 
 - **In-app daemon setup:** the menu-bar app now installs the privileged
