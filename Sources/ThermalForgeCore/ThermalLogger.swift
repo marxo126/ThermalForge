@@ -53,6 +53,11 @@ public final class ThermalLogger {
     private var running = true
     private let isoFormatter = ISO8601DateFormatter()
     private let stats = LogStatsAccumulator()
+    /// Optional source of live Smart-controller telemetry. When a running
+    /// ThermalMonitor drives the log, this feeds the smart_* CSV columns; the
+    /// standalone `log` CLI has no monitor, so it stays nil and those columns
+    /// are left blank (the thermal + fan + power/vent columns still populate).
+    private let telemetryProvider: (@Sendable () -> SmartTelemetry?)?
 
     public var onSample: ((String) -> Void)?
 
@@ -60,8 +65,10 @@ public final class ThermalLogger {
     public private(set) var summary: LogSummary?
 
     public init(fanControl: FanControl, rateHz: Double = 1.0, duration: TimeInterval? = nil,
-                outputDir: URL? = nil, noExpire: Bool = false) throws {
+                outputDir: URL? = nil, noExpire: Bool = false,
+                telemetryProvider: (@Sendable () -> SmartTelemetry?)? = nil) throws {
         self.fanControl = fanControl
+        self.telemetryProvider = telemetryProvider
         self.sampleInterval = 1.0 / rateHz
         self.duration = duration
         self.noExpire = noExpire
@@ -151,6 +158,13 @@ public final class ThermalLogger {
                 for key in sensorKeys {
                     header += ",\(key)"
                 }
+                // Smart-controller tuning telemetry (blank unless a live monitor
+                // drives the log). Appended AFTER the variable-count sensor keys.
+                header += ",smart_state,smart_driver,smart_peak_c,smart_target_pct"
+                header += ",smart_applied_pct,rate_c_per_s,sustained_count,sustained_needed"
+                // Power source + vent — read from status every sample (available
+                // even in the standalone log, no monitor needed).
+                header += ",power_source,vent_max_c"
                 write(to: csvHandle, header + "\n")
                 headerWritten = true
             }
@@ -167,6 +181,17 @@ public final class ThermalLogger {
                     row += ","
                 }
             }
+            // Smart telemetry (8 columns) — populated only when a monitor provides it.
+            if let t = telemetryProvider?() {
+                row += ",\(t.state),\(t.driver),\(String(format: "%.1f", t.peakC))"
+                row += ",\(String(format: "%.3f", t.targetPctRaw)),\(String(format: "%.3f", t.appliedPct))"
+                row += ",\(String(format: "%.3f", t.rateCPerS)),\(t.sustainedCount),\(t.sustainedNeeded)"
+            } else {
+                row += String(repeating: ",", count: 8)
+            }
+            // Power source + vent (from status, always present).
+            row += ",\(status.powerSource)"
+            row += status.ventMaxC.map { ",\(String(format: "%.1f", $0))" } ?? ","
             write(to: csvHandle, row + "\n")
 
             // Accumulate stats for the end-of-session summary.

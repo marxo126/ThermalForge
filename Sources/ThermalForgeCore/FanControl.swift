@@ -44,6 +44,20 @@ public struct FanInfo {
 public struct ThermalStatus: Encodable, Equatable {
     public let fans: [FanStatus]
     public let temperatures: [String: Float]
+    /// Current power source: "ac" | "battery" | "unknown". Telemetry only —
+    /// does not affect fan control.
+    public let powerSource: String
+    /// Peak airflow/vent sensor temperature, if the machine exposes any (nil on
+    /// models without vent sensors). Telemetry only.
+    public let ventMaxC: Float?
+
+    public init(fans: [FanStatus], temperatures: [String: Float],
+                powerSource: String = "unknown", ventMaxC: Float? = nil) {
+        self.fans = fans
+        self.temperatures = temperatures
+        self.powerSource = powerSource
+        self.ventMaxC = ventMaxC
+    }
 
     public struct FanStatus: Encodable, Equatable {
         public let index: Int
@@ -359,20 +373,29 @@ public final class FanControl {
         // use the raw SMC key name — no assumptions about what a key means on
         // hardware we haven't verified.
         var temps: [String: Float] = [:]
+        var ventMax: Float?
         for liveKey in liveTemperatureKeys() {
             if let temp = readTemp(liveKey) {
                 temps[liveKey.key] = temp
+                if liveKey.group == .vent {
+                    ventMax = max(ventMax ?? -Float.greatestFiniteMagnitude, temp)
+                }
             }
         }
 
-        return ThermalStatus(fans: fans, temperatures: temps)
+        return ThermalStatus(
+            fans: fans,
+            temperatures: temps,
+            powerSource: PowerSource.current.rawValue,
+            ventMaxC: ventMax
+        )
     }
 
     // MARK: - Temperatures
 
     /// Which subsystem a temperature key reports — used to keep the hot control
     /// read down to just the sensors the controller and 95°C override consume.
-    private enum TempGroup { case cpu, gpu, other }
+    private enum TempGroup { case cpu, gpu, other, vent }
     private struct LiveTempKey { let key: String; let isIoft: Bool; let group: TempGroup }
     private struct TempCandidate { let key: String; let isIoft: Bool; let group: TempGroup }
 
@@ -395,6 +418,9 @@ public final class FanControl {
                   "TH0x", "TH0A", "TH0B", "TAOL", "TA0P", "TS0P", "TB0T"], .other)
         // GPU — ioft 16.16 fixed-point, 8 bytes (M5 Max)
         c += ["TG0B", "TG0H", "TG0V"].map { TempCandidate(key: $0, isIoft: true, group: .gpu) }
+        // Airflow / vent sensors (telemetry only; NOT a fan-control driver).
+        // Present on some MacBooks, absent on desktops — read if live.
+        c += flt(["TaLP", "TaRF", "TaLW", "TaRW"], .vent)
         return c
     }()
 
@@ -435,7 +461,7 @@ public final class FanControl {
         var cpu: Float = 0
         var gpu: Float = 0
         var read = false
-        for liveKey in keys where liveKey.group != .other {
+        for liveKey in keys where liveKey.group == .cpu || liveKey.group == .gpu {
             guard let temp = readTemp(liveKey) else { continue }
             read = true
             if liveKey.group == .cpu { cpu = max(cpu, temp) } else { gpu = max(gpu, temp) }

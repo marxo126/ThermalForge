@@ -28,6 +28,26 @@ public enum MonitorState: Equatable {
     case safetyOverride
 }
 
+// MARK: - Smart Telemetry
+
+/// An immutable snapshot of the Smart controller's per-tick decision state, for
+/// tuning telemetry (surfaced into the log CSV). Value type so it can be set on
+/// the monitor queue and read on the logger thread without tearing.
+public struct SmartTelemetry: Sendable, Equatable {
+    public let peakC: Float
+    /// Target fan % the controller intended this tick, BEFORE the ramp governor.
+    public let targetPctRaw: Float
+    /// Fan % actually applied after ramping (== lastAppliedRPMPercent).
+    public let appliedPct: Float
+    public let rateCPerS: Float
+    public let sustainedCount: Int
+    public let sustainedNeeded: Int
+    /// "cal" (calibrated lookup), "scurve" (uncalibrated), or "-" (not driving).
+    public let driver: String
+    /// "off" | "waiting" | "hysteresis" | "active".
+    public let state: String
+}
+
 // MARK: - Thermal Monitor
 
 public final class ThermalMonitor {
@@ -38,6 +58,9 @@ public final class ThermalMonitor {
     public private(set) var activeProfile: FanProfile
     public private(set) var state: MonitorState = .idle
     public private(set) var latestStatus: ThermalStatus?
+    /// Latest Smart-controller decision snapshot (nil until Smart has ticked).
+    /// Set on the monitor queue; read as an immutable value by the logger.
+    public private(set) var latestSmartTelemetry: SmartTelemetry?
 
     // MARK: - Tick Timing
 
@@ -394,25 +417,29 @@ public final class ThermalMonitor {
             if tempHistory.count > 4 { tempHistory.removeFirst() }
         }
 
+        let rate = rateOfChange()
         let minPct = minRPM / maxRPM
 
         // Below stop threshold and fans running: turn off (with hysteresis)
-        if peakTemp < stop && fansCurrentlyRunning && rateOfChange() <= 0 {
+        if peakTemp < stop && fansCurrentlyRunning && rate <= 0 {
             applyCommand(.resetAuto)
             lastAppliedRPMPercent = 0
             fansCurrentlyRunning = false
             state = .idle
             TFLogger.shared.fan("Smart fans off: \(String(format: "%.1f", peakTemp))°C below \(Int(stop))°C")
+            recordSmartTelemetry(peakC: peakTemp, state: "off", driver: "-", targetRaw: 0, rate: rate)
             return
         }
 
         // Below floor and fans not running: stay off
         if peakTemp < floor && !fansCurrentlyRunning {
+            recordSmartTelemetry(peakC: peakTemp, state: "off", driver: "-", targetRaw: 0, rate: rate)
             return
         }
 
         // In hysteresis band (50-53°C): maintain current state
         if peakTemp >= stop && peakTemp < floor && !fansCurrentlyRunning {
+            recordSmartTelemetry(peakC: peakTemp, state: "hysteresis", driver: "-", targetRaw: 0, rate: rate)
             return
         }
 
@@ -422,10 +449,10 @@ public final class ThermalMonitor {
             if sustainedAboveCount == 1 {
                 TFLogger.shared.fan("Sustained trigger: \(String(format: "%.1f", peakTemp))°C — waiting (\(sustainedAboveCount)/\(sustainedTicksNeeded)) [Smart]")
             }
+            recordSmartTelemetry(peakC: peakTemp, state: "waiting", driver: "-", targetRaw: 0, rate: rate)
             return
         }
 
-        let rate = rateOfChange()
         var targetPct: Float
 
         if let cal = calibration, let calPct = cal.fanPercentForTemp(peakTemp) {
@@ -457,6 +484,7 @@ public final class ThermalMonitor {
         if targetPct > 0 && targetPct < minPct {
             targetPct = minPct
         }
+        let targetPctRaw = targetPct // controller intent before the ramp governor
 
         // Ramp governors — per-profile rates, per-tick amounts
         let rampUp = activeProfile.curve.rampUpPerSec * tickInterval
@@ -483,6 +511,29 @@ public final class ThermalMonitor {
         } else if fansCurrentlyRunning {
             state = .active(profileName: "Smart")
         }
+
+        recordSmartTelemetry(
+            peakC: peakTemp,
+            state: fansCurrentlyRunning ? "active" : "off",
+            driver: calibration != nil ? "cal" : "scurve",
+            targetRaw: targetPctRaw,
+            rate: rate
+        )
+    }
+
+    /// Capture the Smart controller's decision this tick for tuning telemetry.
+    private func recordSmartTelemetry(peakC: Float, state: String, driver: String,
+                                      targetRaw: Float, rate: Float) {
+        latestSmartTelemetry = SmartTelemetry(
+            peakC: peakC,
+            targetPctRaw: targetRaw,
+            appliedPct: lastAppliedRPMPercent,
+            rateCPerS: rate,
+            sustainedCount: sustainedAboveCount,
+            sustainedNeeded: Int(activeProfile.curve.sustainedTriggerSec / tickInterval),
+            driver: driver,
+            state: state
+        )
     }
 
     /// Temperature rate of change in °C per second (smoothed over history).
