@@ -6,3 +6,6 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 ThermalForge.iconset/
+
+# DMG build output
+dist/
