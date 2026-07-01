@@ -217,10 +217,15 @@ extension FanProfile {
     public static let smart = FanProfile(
         id: "smart",
         name: "Smart",
+        // Tuning insights validated in the marxo126/stats fan telemetry work,
+        // ported as TF-conservative values: engage sooner (sustained 6→4) and
+        // release ~2× faster after a spike (rampDown 0.025→0.05). The Stats
+        // stopTemp tweak was NOT taken — it's baseline-specific and TF's stop=50
+        // (pinned by the Smart-equivalence test) is already conservative.
         curve: Curve(stopTemp: 50, startTemp: 53, ceilingTemp: 85,
                      maxRPMPercent: 1.0, curveShape: .sCurve,
-                     rampUpPerSec: 0.05, rampDownPerSec: 0.025,
-                     sustainedTriggerSec: 6)
+                     rampUpPerSec: 0.05, rampDownPerSec: 0.05,
+                     sustainedTriggerSec: 4)
     )
 
     public static let builtIn: [FanProfile] = [silent, balanced, performance, max]

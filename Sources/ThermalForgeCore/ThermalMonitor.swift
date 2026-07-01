@@ -73,6 +73,12 @@ public final class ThermalMonitor {
     /// the tick rate. Derived from tickInterval so the wall-clock cadence holds.
     private var monitorCadence: Int { max(1, Int((2.0 / tickInterval).rounded())) }
 
+    /// Rate-of-change samples the driver temp every ~1 second (a 4-sample buffer
+    /// = ~3s window), sharper on fast spikes than the old 2s/6s cadence — but
+    /// STILL time-based, never per-tick: the active tick rate is 0.25s, so a
+    /// per-tick 0.75s window would be pure SMC jitter and over-boost badly.
+    private var rateSampleCadence: Int { max(1, Int((1.0 / tickInterval).rounded())) }
+
     /// onUpdate / full-status build run every ~500ms. monitorCadence is always
     /// a multiple of this (2.0 / 0.5 == 4), so a full status exists on monitor ticks.
     private var uiUpdateCadence: Int { max(1, Int((0.5 / tickInterval).rounded())) }
@@ -411,8 +417,10 @@ public final class ThermalMonitor {
         let stop = activeProfile.curve.stopTemp        // off threshold
         let floor = activeProfile.curve.startTemp      // fans engage above this
         let ceiling = activeProfile.curve.ceilingTemp  // full speed at/above this
-        // Sample temperature history at monitor cadence (2s) for stable rate-of-change
-        if tickCounter % monitorCadence == 0 {
+        // Sample the driver temp every ~1s for a ~3s rate-of-change window
+        // (sharper spike response than the old 2s/6s). MUST stay in lock-step
+        // with rateOfChange()'s divisor below.
+        if tickCounter % rateSampleCadence == 0 {
             tempHistory.append(peakTemp)
             if tempHistory.count > 4 { tempHistory.removeFirst() }
         }
@@ -537,13 +545,14 @@ public final class ThermalMonitor {
     }
 
     /// Temperature rate of change in °C per second (smoothed over history).
-    /// History is sampled at monitor cadence (2s), so this covers ~8 seconds.
+    /// History is sampled at rateSampleCadence (~1s), so a 4-sample buffer
+    /// covers ~3 seconds.
     private func rateOfChange() -> Float {
         guard tempHistory.count >= 2 else { return 0 }
         let oldest = tempHistory.first!
         let newest = tempHistory.last!
-        // tempHistory sampled at monitor cadence (2s intervals)
-        let seconds = Float(tempHistory.count - 1) * Float(monitorCadence) * tickInterval
+        // Divisor MUST match the tempHistory sampling cadence (rateSampleCadence).
+        let seconds = Float(tempHistory.count - 1) * Float(rateSampleCadence) * tickInterval
         return (newest - oldest) / seconds
     }
 

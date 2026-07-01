@@ -54,7 +54,7 @@ struct ProfileTests {
         #expect(FanProfile.smart.curve.ceilingTemp == 85)
         #expect(FanProfile.smart.curve.maxRPMPercent == 1.0)
         #expect(FanProfile.smart.curve.curveShape == .sCurve)
-        #expect(FanProfile.smart.curve.sustainedTriggerSec == 6)
+        #expect(FanProfile.smart.curve.sustainedTriggerSec == 4)
     }
 
     @Test("Four built-in profiles exist")
@@ -152,6 +152,9 @@ struct ProfileTests {
         // Smart shifts its ceiling down so it reaches full speed sooner
         #expect(FanProfile.smart.extraCool().curve.ceilingTemp == 78) // 85 - 7
         #expect(FanProfile.smart.extraCool().curve.startTemp == 45)    // 53 - 8
+        // Lock the Extra Cool transform of the newly tuned Smart values.
+        #expect(FanProfile.smart.extraCool().curve.sustainedTriggerSec == 2)        // 4 * 0.5
+        #expect(abs(FanProfile.smart.extraCool().curve.rampDownPerSec - 0.10) < 0.0001) // 0.05 * 2
 
         // Silent is hands-off — Extra Cool is a no-op
         #expect(FanProfile.silent.extraCool() == FanProfile.silent)
@@ -287,7 +290,7 @@ struct ProfileTests {
         #expect(smart.curve.handsOff == false)
         #expect(smart.curve.alwaysOn == false)
         #expect(smart.curve.instantEngage == false)
-        #expect(smart.curve.sustainedTriggerSec == 6)
+        #expect(smart.curve.sustainedTriggerSec == 4)
     }
 
     @Test("Balanced hysteresis: fans stay on between stop and start temps")
@@ -367,7 +370,7 @@ struct ProfileTests {
 
         // Smart: same base as Balanced (adaptive logic modifies at runtime)
         #expect(FanProfile.smart.curve.rampUpPerSec == 0.05)
-        #expect(FanProfile.smart.curve.rampDownPerSec == 0.025)
+        #expect(FanProfile.smart.curve.rampDownPerSec == 0.05) // tuned: release ~2× faster
     }
 
     @Test("Per-profile sustained trigger durations")
@@ -375,7 +378,7 @@ struct ProfileTests {
         #expect(FanProfile.balanced.curve.sustainedTriggerSec == 8)     // Conservative
         #expect(FanProfile.performance.curve.sustainedTriggerSec == 4)  // Responsive
         #expect(FanProfile.max.curve.sustainedTriggerSec == 5)          // Attack dog threshold
-        #expect(FanProfile.smart.curve.sustainedTriggerSec == 6)        // Proactive
+        #expect(FanProfile.smart.curve.sustainedTriggerSec == 4)        // Proactive (tuned: engage ~2s sooner)
     }
 
     // MARK: - Default profile (#9)
