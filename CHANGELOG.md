@@ -8,6 +8,28 @@ Every change was applied on top of the `PR #16` performance/structural
 refactor, builds cleanly on Swift 6.3.2, and passes the test suite (45 tests).
 Original authorship is preserved on each integrated change.
 
+### Fan-control improvements ported from the Stats fork
+
+Ported the fan-control work developed & tuned in the `marxo126/stats` fork
+(`pr5-thermalforge-port`, where ThermalForge's engine was ported into Stats and
+improved). Observability-first, behavior-last; no Stats number was blind-copied,
+and the 95°C safety override is untouched.
+
+- **Smart telemetry** — an immutable per-tick snapshot of the Smart controller's
+  decision (peak, raw/applied target %, rate °C/s, sustained progress, driver,
+  state), exposed on the monitor and folded into the log CSV (`smart_*` columns).
+- **Power + vent telemetry** — new `PowerSource` (AC/battery, IOKit) and airflow
+  SMC keys (`TaLP/TaRF/TaLW/TaRW`); `status` now reports `power_source` +
+  `vent_max_c`, and they're logged every sample. Telemetry only — vent is kept
+  out of the fan driver; battery ease-off is deliberately deferred. _Verified on
+  M4 Max: `power_source=ac`, `vent_max_c≈47`._
+- **Sharper rate-of-change** — the Smart proactive-ramp window is sampled on a
+  ~1s cadence (~3s window vs ~6s) for faster spike response, kept time-based
+  (never per-tick — TF's 0.25s active tick would make that pure jitter).
+- **Smart tuning** — engage ~2s sooner (`sustainedTriggerSec` 6→4) and release
+  ~2× faster after a spike (`rampDownPerSec` 0.025→0.05), as TF-conservative
+  values. The baseline-specific Stats `stopTemp` tweak was not taken.
+
 ### Improved thermal logging & stats
 
 The `log` command previously wrote only raw per-sample CSVs — you had to
